@@ -73,7 +73,7 @@ MiniMoto motor5(0xCA);
 
 String VERSION_STR = "Zigarren-Hans V0.0.5";
 
-bool IS_TEST = true;
+bool IS_TEST = false;
 bool IS_HUMIDOR_SETUP_MODE = false;
 
 const float HUMIDITY_LIMIT = 68.0F;
@@ -93,7 +93,6 @@ int timeToWaitSecHumidify = 0;
 // history avg hum. sensors
 float avg_both_humidity_sensors[5] = { 0.0F, 0.0F, 0.0F, 0.0F, 0.0F };
 
-
 unsigned long timeStampHumidifyProcess = 0;
 
 // Methods
@@ -105,7 +104,6 @@ enum Status { Humidify,
               Stopped,
               Error };
 Status currStatus;
-
 
 char dateTimeString[25];
 void createRunningTime(char* buffer, size_t bufferSize) {
@@ -130,7 +128,7 @@ void printMillisTimeSerialAndLcd(unsigned long millis) {
   unsigned long hours = minutes / 60;
   minutes %= 60;
 
-  lcd.print(F("Last: "));
+  lcd.print(F("Last:\n"));
   lcd.print(hours);
   lcd.print(F("h "));
   lcd.print(minutes);
@@ -142,7 +140,7 @@ void printMillisTimeSerialAndLcd(unsigned long millis) {
   lcd.print(timeToWaitSecHumidify);
   lcd.print(F("s\n"));
 
-  Serial.print(F("Last: "));
+  Serial.print(F("Last:\n"));
   Serial.print(hours);
   Serial.print(F("h "));
   Serial.print(minutes);
@@ -154,7 +152,6 @@ void printMillisTimeSerialAndLcd(unsigned long millis) {
   Serial.print(F("@ "));
   Serial.print(timeToWaitSecHumidify);
   Serial.print(F("s\n"));
-
 }
 
 void setError() {
@@ -237,12 +234,8 @@ void checkButtons(int &redButtonRead, int &greenButtonRead) {
   greenButtonRead = digitalRead(PIN_IN_GREEN_BUTTON_IN);
 }
 
-
-
-
-// unused...TODO
-// keeps sensor data each "maybe" humidify interval
-float adjustHumidifyingTime(float sensorAvg, int defaultWateringTimeSec) {
+// keep history, if average history differs too much from target value, increase humidity time
+float adjustHumidifyingTime(float sensorAvg) {
   int sizeArray = sizeof(avg_both_humidity_sensors)/sizeof(avg_both_humidity_sensors[0]);
 
   // shuffle
@@ -254,29 +247,35 @@ float adjustHumidifyingTime(float sensorAvg, int defaultWateringTimeSec) {
   avg_both_humidity_sensors[sizeArray-1] = sensorAvg; // new value
 
   // debug array content
-  Serial.println("SIZE " + String(avg_both_humidity_sensors[4]) + " " + String(avg_both_humidity_sensors[3]) + " " + String(avg_both_humidity_sensors[2]) + " " + String(avg_both_humidity_sensors[1]) + " " + String(avg_both_humidity_sensors[0]));
+  //Serial.println("SIZE " + String(avg_both_humidity_sensors[4]) + " " + String(avg_both_humidity_sensors[3]) + " " + String(avg_both_humidity_sensors[2]) + " " + String(avg_both_humidity_sensors[1]) + " " + String(avg_both_humidity_sensors[0]));
 
   // check which data is available, calculate avg delta from all old values
   float sum = 0.0F;
   float count = 0.0F;
   for (int i = 0; i < sizeArray; i++) {
     if (avg_both_humidity_sensors[i] != 0.0F) {
-
-      Serial.println(avg_both_humidity_sensors[i]);
-
       sum += avg_both_humidity_sensors[i];
       count += 1.0F;
     }
   }
-
-  float average = 0.0F;
+  float historyAverage = 0.0F;
   if (count != 0.0F) {
-    average = sum / count;
+    historyAverage = sum / count;
   }
 
-  Serial.println("AVG HUM " + String(average));
+  // check deviation from average to target value
+  float deviation = ((HUMIDITY_LIMIT - historyAverage) / historyAverage) * 100.0F;
 
-  return 10.0F;
+  // if deviation >5%, increase by absolute value (this is reset each run to default, might to be enhanced..)
+  unsigned int increaseTimeSec = 5;
+
+  if (deviation > 5.0F) {
+    timeToWaitSecHumidify += increaseTimeSec;
+    Serial.print(F("Deviation too high: "));
+    Serial.println(deviation);
+    //Serial.println(timeToWaitSecHumidify);
+  }
+  return timeToWaitSecHumidify;
 }
 
 void setup(void) {
@@ -345,8 +344,6 @@ void checkDHTSensors() {
   }
 
   float divHumidity = (humidityS1 - humidityS2) / humidityS1 * 100;
-  // Serial.print("Div Humidity: ");
-  // Serial.println(String(divHumidity));
   
   // div between sensors < 10%
   if ((divHumidity < 10) && (currStatus != Error) && (currStatus != Stopped)) {
@@ -361,8 +358,7 @@ void checkDHTSensors() {
 
     // motor start, atomizer go
     if (currStatus == Humidify) {
-
-        humifidyCountGlobal++;
+      humifidyCountGlobal++;
 
       // run motor 2 min
       int runMotorBeforeHumidifyTimeSec = 2*60;
@@ -379,7 +375,7 @@ void checkDHTSensors() {
       // -------humidify on
       float humidityAverage = (humidityS1 + humidityS2) / 2.0F;
 
-      // set default/base times which are adjusted by history
+      // set default/base times
 
       // <55%
       if(humidityAverage < HUMIDITY_LOW) {
@@ -395,22 +391,23 @@ void checkDHTSensors() {
         timeToWaitSecHumidify = 10;
       }
 
-      timeToWaitSecHumidify = adjustHumidifyingTime(humidityAverage, timeToWaitSecHumidify);
-
+      timeToWaitSecHumidify = adjustHumidifyingTime(humidityAverage);
 
       // humidor new, setup
       if(IS_HUMIDOR_SETUP_MODE) {
         timeToWaitSecHumidify = 60;
       }
 
-      // humidify if test
-      if (IS_TEST) {
-        timeToWaitSecHumidify = 5;
-      }
+      // humidify
       digitalWrite(PIN_OUT_WATER_ATOMIZER, HIGH);  // atomize full
 
       // humidify until...
-      delayActiveSeconds(timeToWaitSecHumidify);
+      if (IS_TEST) {
+        // if test, only do one second
+        delayActiveSeconds(1);
+      } else {
+        delayActiveSeconds(timeToWaitSecHumidify);
+      }
 
       // stop humidifier
       digitalWrite(PIN_OUT_WATER_ATOMIZER, LOW);  // atomization stopped
@@ -441,16 +438,15 @@ void checkDHTSensors() {
 
 
 void loop() {
-    // *check buttons always in active delay loop *
+  // *check buttons always in active delay loop *
+  if ((currStatus == Error) || (currStatus == Stopped)) {
+    // not running, waiting
+    delayActiveSeconds(2);
 
-    if ((currStatus == Error) || (currStatus == Stopped)) {
-      // not running, waiting
-      delayActiveSeconds(2);
-
-    } else if ((currStatus == Idle) || (currStatus == Humidify)) {
-      // running
-      checkDHTSensors();
-    }
+  } else if ((currStatus == Idle) || (currStatus == Humidify)) {
+    // running
+    checkDHTSensors();
+  }
 
   // do not do delays here...
   Serial.println(F("========================================================="));
@@ -490,11 +486,6 @@ void delayActiveSeconds(unsigned long elapsedTimeSec) {
     float humidityS2 = temp_hum_val_sensor1[0];
     float tempS2 = temp_hum_val_sensor1[1];
 
-    //String sensor1Str = String("Sensor 1\nHumidity: ") + String(humidityS1) + String(" %\nTemp.: ") + String(tempS1) + String(" C\n===================\n");
-    //String sensor2Str = String("Sensor 2\nHumidity: ") + String(humidityS2) + String(" %\nTemp.: ") + String(tempS2) + String(" C\n===================");
-    //String toPrint = sensor1Str + sensor2Str;
-    //Serial.println(toPrint);
-
     char buffer[256];
     snprintf(buffer, sizeof(buffer),
          "Sensor 1\nHumidity: %d.%02d %%\nTemp.: %d.%02d C\n===================\n"
@@ -504,7 +495,6 @@ void delayActiveSeconds(unsigned long elapsedTimeSec) {
          (int)humidityS2, (int)(humidityS2 * 100) % 100,
          (int)tempS2, (int)(tempS2 * 100) % 100);
 
-    //printNewLCDScreenAndConsole(toPrint);
     printNewLCDScreenAndConsole(buffer);
 
     // check motor
