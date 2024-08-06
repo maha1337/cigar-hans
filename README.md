@@ -14,8 +14,13 @@ Around 70% humidity is perfect for storing cigars inside of humidor, so this val
 ### Version History
 
 * TODO
-  * Adaptive humidifying time based on history
-  * ...Ideas
+  * Ideas/Improvements?
+  * Setup watering levels based on temperature? 
+* 0.0.5
+  * Add humidity sensor history data
+  * Adapt watering based on history
+  * Move string operations from RAM to flash
+  * Remove intensive string operations
 * 0.0.4
   * Replace string operations by prints to save dynamic memory
   * Print elapsed time between the last humidification process (only possible from "device-on" time)

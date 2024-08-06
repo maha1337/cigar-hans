@@ -1,4 +1,3 @@
-
 /*
  * Cigar humidifier, using water atomizer.
  * ======================================
@@ -72,19 +71,18 @@ MiniMoto motor5(0xCA);
 // globals (other)
 // ============================================================================================================================================
 
-String VERSION_STR = "Zigarren-Hans V0.0.4";
+String VERSION_STR = "Zigarren-Hans V0.0.5";
 
-bool IS_TEST = false;
+bool IS_TEST = true;
 bool IS_HUMIDOR_SETUP_MODE = false;
 
-float HUMIDITY_LIMIT = 70.0F;
-// float HUMIDITY_LIMIT = 85.0F;
+const float HUMIDITY_LIMIT = 68.0F;
 
 // humidity steps
-float HUMIDITY_LOW = 55;
-float HUMIDITY_MID = 60;
-float HUMIDITY_MIDHIGH = 65;
-float HUMIDITY_HIGH = HUMIDITY_LIMIT;
+const float HUMIDITY_LOW = 55;
+const float HUMIDITY_MID = 60;
+const float HUMIDITY_MIDHIGH = 65;
+const float HUMIDITY_HIGH = HUMIDITY_LIMIT;
 
 float temp_hum_val_sensor0[2] = { 0.0F, 0.0F };
 float temp_hum_val_sensor1[2] = { 0.0F, 0.0F };
@@ -92,6 +90,7 @@ float temp_hum_val_sensor1[2] = { 0.0F, 0.0F };
 int humifidyCountGlobal = 0;
 int timeToWaitSecHumidify = 0;
 
+// history avg hum. sensors
 float avg_both_humidity_sensors[5] = { 0.0F, 0.0F, 0.0F, 0.0F, 0.0F };
 
 
@@ -108,9 +107,8 @@ enum Status { Humidify,
 Status currStatus;
 
 
-// addressing too much memory by the char[]!
-String createRunningTime() {
-
+char dateTimeString[25];
+void createRunningTime(char* buffer, size_t bufferSize) {
   unsigned long currentMillis = millis();
   unsigned long seconds = currentMillis / 1000;
   unsigned long minutes = seconds / 60;
@@ -121,14 +119,10 @@ String createRunningTime() {
   unsigned long remainingMinutes = minutes % 60;
   unsigned long remainingHours = hours % 24;
 
-  char dateTimeString[25];
-  sprintf(dateTimeString, "%02ld d %02ld:%02ld:%02ld", days, remainingHours, remainingMinutes, remainingSeconds);
-
-  return String(dateTimeString);
+  snprintf(buffer, bufferSize, "%02ld d %02ld:%02ld:%02ld", days, remainingHours, remainingMinutes, remainingSeconds);
 }
 
 void printMillisTimeSerialAndLcd(unsigned long millis) {
-
   unsigned long seconds = millis / 1000;
   millis %= 1000;
   unsigned long minutes = seconds / 60;
@@ -136,24 +130,32 @@ void printMillisTimeSerialAndLcd(unsigned long millis) {
   unsigned long hours = minutes / 60;
   minutes %= 60;
 
-  // print directly and save some string operations, "dyn memory" is at its end
-  lcd.print("Last: ");
-  lcd.print(String(hours));
-  lcd.print("h ");
-  lcd.print(String(minutes));
-  lcd.print("m ");
-  lcd.print(String(seconds));
-  lcd.print("s\n");
+  lcd.print(F("Last: "));
+  lcd.print(hours);
+  lcd.print(F("h "));
+  lcd.print(minutes);
+  lcd.print(F("m "));
+  lcd.print(seconds);
+  lcd.print(F("s "));
 
-  Serial.print("Last: ");
-  Serial.print(String(hours));
-  Serial.print("h ");
-  Serial.print(String(minutes));
-  Serial.print("m ");
-  Serial.print(String(seconds));
-  Serial.print("s\n");
+  lcd.print(F("@ "));
+  lcd.print(timeToWaitSecHumidify);
+  lcd.print(F("s\n"));
+
+  Serial.print(F("Last: "));
+  Serial.print(hours);
+  Serial.print(F("h "));
+  Serial.print(minutes);
+  Serial.print(F("m "));
+  Serial.print(seconds);
+  Serial.print(F("s "));
+
+  // watering time
+  Serial.print(F("@ "));
+  Serial.print(timeToWaitSecHumidify);
+  Serial.print(F("s\n"));
+
 }
-
 
 void setError() {
   currStatus = Error;
@@ -183,64 +185,67 @@ void printHeadLines() {
   lcd.clearScreen();
   lcd.setCursor(0, 0);
   lcd.println(VERSION_STR);
-  lcd.println("===================");
+  lcd.println(F("==================="));
 }
 
-void printNewLCDScreenAndConsole(String toPrint) {
-
+void printNewLCDScreenAndConsole(const char *toPrint) {
   printHeadLines();
 
   lcd.println(toPrint);
   Serial.println(toPrint);
 
-  if (currStatus == Stopped) {
-    lcd.println("---- Stopped! ----");
-  } else if (currStatus == Idle) {
-    lcd.println("---- Idle! ----");
-  } else if (currStatus == Humidify) {
-    // set new time for humidify
-    timeStampHumidifyProcess = millis();
-    lcd.println("---- Humidifying! ----");
-  } else if (currStatus == Error) {
-    lcd.println("---- Error! ----");
+  const char* statusStr;
+  switch (currStatus) {
+    case Stopped:
+      statusStr = "--Stopped!--";
+      break;
+    case Idle:
+      statusStr = "--Idle!--";
+      break;
+    case Humidify:
+      timeStampHumidifyProcess = millis();
+      statusStr = "--Humidifying!--";
+      break;
+    case Error:
+      statusStr = "--Error!--";
+      break;
   }
 
-  // save string ops...
-  Serial.print("Humidified: ");
-  Serial.print(String(humifidyCountGlobal));
-  Serial.print(" x\n");
-  lcd.print("Humidified: ");
-  lcd.print(String(humifidyCountGlobal));
-  lcd.print(" x\n");
+  lcd.println(statusStr);
+  Serial.println(statusStr);
 
-  // calculate time last humidified
-  if(timeStampHumidifyProcess != 0) {
+  lcd.print(F("Humidified: "));
+  lcd.print(humifidyCountGlobal);
+  lcd.print(F(" x\n"));
+
+  Serial.print(F("Humidified: "));
+  Serial.print(humifidyCountGlobal);
+  Serial.print(F(" x\n"));
+
+  if (timeStampHumidifyProcess != 0) {
     unsigned long timeBetweenNowAndLast = millis() - timeStampHumidifyProcess;
     printMillisTimeSerialAndLcd(timeBetweenNowAndLast);
   } else {
-    lcd.println("Not yet humidified!");
-    Serial.println("Not yet humidified!");
+    lcd.println(F("Not yet humidified!"));
+    Serial.println(F("Not yet humidified!"));
   }
 }
 
-
 // function buttons: red-stop all, green-start all
-int* checkButtons() {
-
-  static int buttonResult[2];
-  int redButtonRead = digitalRead(PIN_IN_RED_BUTTON_IN);      // read signal
-  int greenButtonRead = digitalRead(PIN_IN_GREEN_BUTTON_IN);  // read signal
-  buttonResult[0] = redButtonRead;
-  buttonResult[1] = greenButtonRead;
-  return buttonResult;
+void checkButtons(int &redButtonRead, int &greenButtonRead) {
+  redButtonRead = digitalRead(PIN_IN_RED_BUTTON_IN);
+  greenButtonRead = digitalRead(PIN_IN_GREEN_BUTTON_IN);
 }
+
+
 
 
 // unused...TODO
 // keeps sensor data each "maybe" humidify interval
-float adjustHumidifyingTime(float sensorAvg) {
+float adjustHumidifyingTime(float sensorAvg, int defaultWateringTimeSec) {
   int sizeArray = sizeof(avg_both_humidity_sensors)/sizeof(avg_both_humidity_sensors[0]);
 
+  // shuffle
   for (int i = 0; i < sizeArray - 1; i++ ) {
   // 0<-1 .. 3<-4
     avg_both_humidity_sensors[i] = avg_both_humidity_sensors[i+1];
@@ -249,12 +254,30 @@ float adjustHumidifyingTime(float sensorAvg) {
   avg_both_humidity_sensors[sizeArray-1] = sensorAvg; // new value
 
   // debug array content
-  // Serial.println("SIZE " + String(avg_both_humidity_sensors[4]) + " " + String(avg_both_humidity_sensors[3]) + " " + String(avg_both_humidity_sensors[2]) + " " + String(avg_both_humidity_sensors[1]) + " " + String(avg_both_humidity_sensors[0]));
+  Serial.println("SIZE " + String(avg_both_humidity_sensors[4]) + " " + String(avg_both_humidity_sensors[3]) + " " + String(avg_both_humidity_sensors[2]) + " " + String(avg_both_humidity_sensors[1]) + " " + String(avg_both_humidity_sensors[0]));
+
   // check which data is available, calculate avg delta from all old values
+  float sum = 0.0F;
+  float count = 0.0F;
+  for (int i = 0; i < sizeArray; i++) {
+    if (avg_both_humidity_sensors[i] != 0.0F) {
+
+      Serial.println(avg_both_humidity_sensors[i]);
+
+      sum += avg_both_humidity_sensors[i];
+      count += 1.0F;
+    }
+  }
+
+  float average = 0.0F;
+  if (count != 0.0F) {
+    average = sum / count;
+  }
+
+  Serial.println("AVG HUM " + String(average));
 
   return 10.0F;
 }
-
 
 void setup(void) {
 
@@ -284,14 +307,13 @@ void setup(void) {
 
   // init status, set to run at (re) powering
   setStart();
-  Serial.println("Setup done!");
+  Serial.println(F("Setup done!"));
 
   if(IS_TEST)
   {
     timeStampHumidifyProcess = millis();
   }
 }
-
 
 // use timed loops to check buttons
 void checkDHTSensors() {
@@ -304,7 +326,7 @@ void checkDHTSensors() {
   }
 
   // check all live sensors
-  Serial.print("Waiting :");
+  Serial.print(F("Waiting :"));
   Serial.println(String(timeToWaitSec));
 
   delayActiveSeconds(timeToWaitSec);
@@ -318,7 +340,7 @@ void checkDHTSensors() {
 
   // check if sensors ok, otherwise error!
   if ((humidityS1 == 0.0F) || (humidityS2 == 0.0F)) {
-      Serial.println("Error, sensors not working!");
+    Serial.println(F("Error, sensors not working!"));
       setError();
   }
 
@@ -345,7 +367,7 @@ void checkDHTSensors() {
       // run motor 2 min
       int runMotorBeforeHumidifyTimeSec = 2*60;
       if (IS_TEST) {
-        runMotorBeforeHumidifyTimeSec = 5;
+        runMotorBeforeHumidifyTimeSec = 1;
       }
 
       // start motor "on"
@@ -356,22 +378,8 @@ void checkDHTSensors() {
 
       // -------humidify on
       float humidityAverage = (humidityS1 + humidityS2) / 2.0F;
-      //Serial.println("Average Humidity: ");
-      //Serial.println(String(humidityAverage));
 
-
-/*
-TODO:
-maybe create incremental watering, based on history...
-maybe based on temperature
-*/
-
-      /*
-
-if value does not change, more water
-if value changes water value down
-
-      */
+      // set default/base times which are adjusted by history
 
       // <55%
       if(humidityAverage < HUMIDITY_LOW) {
@@ -384,10 +392,11 @@ if value changes water value down
         timeToWaitSecHumidify = 15;
       // >= 65 < 70%
       } else if ((humidityAverage >= HUMIDITY_MIDHIGH) && (humidityAverage < HUMIDITY_HIGH)) {
-        // only this step required fine tuning
-        timeToWaitSecHumidify = adjustHumidifyingTime(humidityAverage);
-        // timeToWaitSecHumidify = 10;
+        timeToWaitSecHumidify = 10;
       }
+
+      timeToWaitSecHumidify = adjustHumidifyingTime(humidityAverage, timeToWaitSecHumidify);
+
 
       // humidor new, setup
       if(IS_HUMIDOR_SETUP_MODE) {
@@ -444,7 +453,7 @@ void loop() {
     }
 
   // do not do delays here...
-  Serial.println("=========================================================");
+  Serial.println(F("========================================================="));
 }
 
 
@@ -455,13 +464,12 @@ void delayActiveSeconds(unsigned long elapsedTimeSec) {
   unsigned long startTime = millis();
   while (startTime + elapsedTimeMillis > millis()) {
 
-      // DELME...
+    // Debug
     //adjustTimeBySensorHistory(123.0F);
 
     // always: check buttons pressed
-    int* buttonResult = checkButtons();
-    int redButtonRead = buttonResult[0];
-    int greenButtonRead = buttonResult[1];
+    int redButtonRead, greenButtonRead;
+    checkButtons(redButtonRead, greenButtonRead);
 
     if (redButtonRead == PRESSED && (currStatus == Idle || currStatus == Humidify)) {
       //Serial.println("Red button pressed!");
@@ -482,13 +490,22 @@ void delayActiveSeconds(unsigned long elapsedTimeSec) {
     float humidityS2 = temp_hum_val_sensor1[0];
     float tempS2 = temp_hum_val_sensor1[1];
 
-    String sensor1Str = String("Sensor 1\nHumidity: ") + String(humidityS1) + String(" %\nTemp.: ") + String(tempS1) + String(" C\n===================\n");
-    String sensor2Str = String("Sensor 2\nHumidity: ") + String(humidityS2) + String(" %\nTemp.: ") + String(tempS2) + String(" C\n===================");
-
-    String toPrint = sensor1Str + sensor2Str;
+    //String sensor1Str = String("Sensor 1\nHumidity: ") + String(humidityS1) + String(" %\nTemp.: ") + String(tempS1) + String(" C\n===================\n");
+    //String sensor2Str = String("Sensor 2\nHumidity: ") + String(humidityS2) + String(" %\nTemp.: ") + String(tempS2) + String(" C\n===================");
+    //String toPrint = sensor1Str + sensor2Str;
     //Serial.println(toPrint);
-    printNewLCDScreenAndConsole(toPrint);
 
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer),
+         "Sensor 1\nHumidity: %d.%02d %%\nTemp.: %d.%02d C\n===================\n"
+         "Sensor 2\nHumidity: %d.%02d %%\nTemp.: %d.%02d C\n===================",
+         (int)humidityS1, (int)(humidityS1 * 100) % 100,
+         (int)tempS1, (int)(tempS1 * 100) % 100,
+         (int)humidityS2, (int)(humidityS2 * 100) % 100,
+         (int)tempS2, (int)(tempS2 * 100) % 100);
+
+    //printNewLCDScreenAndConsole(toPrint);
+    printNewLCDScreenAndConsole(buffer);
 
     // check motor
     if (digitalRead(FAULTn) == LOW) {
@@ -498,10 +515,10 @@ void delayActiveSeconds(unsigned long elapsedTimeSec) {
         // stop at motor fault
         printNewLCDScreenAndConsole("Motor 0 fault!");
         setStop();
-        if (result & OCP) Serial.println("Chip overcurrent!");
-        if (result & ILIMIT) Serial.println("Load current limit!");
-        if (result & UVLO) Serial.println("Undervoltage!");
-        if (result & OTS) Serial.println("Over temp!");
+        if (result & OCP) Serial.println(F("Chip overcurrent!"));
+        if (result & ILIMIT) Serial.println(F("Load current limit!"));
+        if (result & UVLO) Serial.println(F("Undervoltage!"));
+        if (result & OTS) Serial.println(F("Over temp!"));
         break;
       }
     }
