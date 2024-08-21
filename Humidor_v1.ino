@@ -50,7 +50,7 @@
 #define FAULTn 16  // Pin used for fault detection.
 
 // create display
-Arduino_ST7789 lcd = Arduino_ST7789(SCK, SDA);
+const Arduino_ST7789 lcd = Arduino_ST7789(SCK, SDA);
 
 // DHT sensors
 DHT dht1(DHTPIN1, DHTTYPE);  //   DHT11 DHT21 DHT22
@@ -62,7 +62,7 @@ DHT dht2(DHTPIN2, DHTTYPE);  //   DHT11 DHT21 DHT22
 //MiniMoto motor2(0xC4);
 //MiniMoto motor3(0xC6);
 //MiniMoto motor4(0xC8);
-MiniMoto motor5(0xCA);
+const MiniMoto motor5(0xCA);
 //MiniMoto motor6(0xCC);
 //MiniMoto motor7(0xCE);
 //MiniMoto motor8(0xD0);
@@ -71,10 +71,10 @@ MiniMoto motor5(0xCA);
 // globals (other)
 // ============================================================================================================================================
 
-String VERSION_STR = "Zigarren-Hans V0.0.5";
+const char VERSION_STR[] = "Zigarren-Hans V1.0.0";
 
-bool IS_TEST = false;
-bool IS_HUMIDOR_SETUP_MODE = false;
+const bool IS_TEST = false;
+const bool IS_HUMIDOR_SETUP_MODE = false;
 
 const float HUMIDITY_LIMIT = 68.0F;
 
@@ -83,6 +83,7 @@ const float HUMIDITY_LOW = 55;
 const float HUMIDITY_MID = 60;
 const float HUMIDITY_MIDHIGH = 65;
 const float HUMIDITY_HIGH = HUMIDITY_LIMIT;
+const char* STATUS_STRINGS [4] = { "--Stopped!--", "--Idle!--", "--Humidifying!--", "--Error!--"};
 
 float temp_hum_val_sensor0[2] = { 0.0F, 0.0F };
 float temp_hum_val_sensor1[2] = { 0.0F, 0.0F };
@@ -106,6 +107,7 @@ enum Status { Humidify,
 Status currStatus;
 
 char dateTimeString[25];
+
 void createRunningTime(char* buffer, size_t bufferSize) {
   unsigned long currentMillis = millis();
   unsigned long seconds = currentMillis / 1000;
@@ -179,34 +181,48 @@ void setStart() {
 
 // lcd, 240 x 240, 14 chars - size 3
 void printHeadLines() {
-  lcd.clearScreen();
   lcd.setCursor(0, 0);
   lcd.println(VERSION_STR);
   lcd.println(F("==================="));
 }
 
 void printNewLCDScreenAndConsole(const char *toPrint) {
+
+  // reset display all 30min (IPS display stuck after long random time)
+  unsigned long overallRunningTime = millis();
+  const unsigned long halfHourMillis = 1800000;
+  const unsigned long margin = 5000;  // 5 seconds margin
+  if ((overallRunningTime % halfHourMillis <= margin) && (overallRunningTime >= 20000)) {
+    lcd = Arduino_ST7789(SCK, SDA);
+    lcd.init();
+    lcd.setCursor(0, 0);
+    lcd.setTextColor(GREEN, BLACK);
+    lcd.setTextSize(2);
+  }
+
+  char* statusStr;
+  switch (currStatus) {
+    case Stopped:
+      statusStr = STATUS_STRINGS[0];
+      break;
+    case Idle:
+      statusStr = STATUS_STRINGS[1];
+      break;
+    case Humidify:
+      timeStampHumidifyProcess = millis();
+      statusStr = STATUS_STRINGS[2];
+      break;
+    case Error:
+      statusStr = STATUS_STRINGS[3];
+      break;
+  }
+
+  // clear display
+  lcd.clearScreen();
   printHeadLines();
 
   lcd.println(toPrint);
   Serial.println(toPrint);
-
-  const char* statusStr;
-  switch (currStatus) {
-    case Stopped:
-      statusStr = "--Stopped!--";
-      break;
-    case Idle:
-      statusStr = "--Idle!--";
-      break;
-    case Humidify:
-      timeStampHumidifyProcess = millis();
-      statusStr = "--Humidifying!--";
-      break;
-    case Error:
-      statusStr = "--Error!--";
-      break;
-  }
 
   lcd.println(statusStr);
   Serial.println(statusStr);
@@ -245,9 +261,6 @@ float adjustHumidifyingTime(float sensorAvg) {
   }
   // 4<-new
   avg_both_humidity_sensors[sizeArray-1] = sensorAvg; // new value
-
-  // debug array content
-  //Serial.println("SIZE " + String(avg_both_humidity_sensors[4]) + " " + String(avg_both_humidity_sensors[3]) + " " + String(avg_both_humidity_sensors[2]) + " " + String(avg_both_humidity_sensors[1]) + " " + String(avg_both_humidity_sensors[0]));
 
   // check which data is available, calculate avg delta from all old values
   float sum = 0.0F;
