@@ -16,6 +16,10 @@ Around 70% humidity is perfect for storing cigars inside of humidor, so this val
 * TODO
   * Ideas/Improvements?
   * Watering based on temperature?
+  * Add watchdog for sensors?
+* 1.0.0
+  * Fix IPS display black screen bug
+  * Finally remove all strings
 * 0.0.5
   * Add humidity sensor history data
   * Adapt watering based on average history
